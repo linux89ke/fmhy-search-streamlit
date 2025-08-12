@@ -1,14 +1,3 @@
-Of course. Based on the `JSON-LD` data you provided, here is a rectified version of the Python script.
-
-The key change is in the `get_main_product_images` function. It now specifically targets the confirmed data structure (`mainEntity -> image -> contentUrl`) for a more direct and reliable way to get the image URLs. The fallback method of searching for `<img>` tags is kept in place to ensure the script remains robust if it encounters pages with a different structure.
-
------
-
-### \#\# Rectified Python Script
-
-This updated script is more precise in its primary method of extracting images.
-
-```python
 import streamlit as st
 import pandas as pd
 import cloudscraper
