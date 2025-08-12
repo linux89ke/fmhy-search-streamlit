@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import cloudscraper
 from bs4 import BeautifulSoup
+import json
+import re
 import time
 from io import BytesIO
 
@@ -16,7 +18,6 @@ JUMIA_DOMAINS = {
     "Senegal": "jumia.sn"
 }
 
-# Create cloudscraper session once
 scraper = cloudscraper.create_scraper()
 
 # Function to get Jumia product link from SKU
@@ -38,7 +39,7 @@ def get_jumia_link(sku, domain):
     except:
         return "NONE"
 
-# Function to count product images on product page
+# New improved function to count product images
 def get_image_count(product_url):
     if product_url == "NONE":
         return 0
@@ -46,19 +47,27 @@ def get_image_count(product_url):
         response = scraper.get(product_url)
         if response.status_code != 200:
             return 0
+
         soup = BeautifulSoup(response.text, "html.parser")
-        # Select images in the product gallery section - this may vary by site design
-        # Try selecting images that have 'data-src' or 'src' with 'jumia.is' domain
-        imgs = soup.select("div#image-thumb img")
-        if not imgs:
-            # fallback: get all images with 'jumia.is' in URL
-            imgs = [img for img in soup.find_all("img") if img.get("data-src") and "jumia.is" in img.get("data-src")]
-        image_urls = set()
-        for img in imgs:
-            src = img.get("data-src") or img.get("src")
-            if src and "jumia.is" in src:
-                image_urls.add(src)
-        return len(image_urls)
+
+        # Try to find <script type="application/ld+json"> containing images
+        scripts = soup.find_all("script", {"type": "application/ld+json"})
+        for script in scripts:
+            try:
+                data = json.loads(script.string)
+                if isinstance(data, dict) and "image" in data:
+                    images = data["image"]
+                    if isinstance(images, list):
+                        return len(images)
+                    elif isinstance(images, str):
+                        return 1
+            except:
+                continue
+
+        # Fallback: regex search for jumia.is jpg URLs in page text
+        matches = re.findall(r'https://\w+\.jumia\.is/.+?\.jpg', response.text)
+        unique_imgs = set(matches)
+        return len(unique_imgs)
     except:
         return 0
 
