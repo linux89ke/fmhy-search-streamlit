@@ -1,98 +1,75 @@
 import streamlit as st
 import pandas as pd
-import cloudscraper
+import requests
 from bs4 import BeautifulSoup
-import time
 from io import BytesIO
 
-# Map for Jumia domains
-JUMIA_DOMAINS = {
-    "Kenya": "jumia.co.ke",
-    "Nigeria": "jumia.com.ng",
-    "Uganda": "jumia.ug",
-    "Egypt": "jumia.com.eg",
-    "Ivory Coast": "jumia.ci",
-    "Ghana": "jumia.com.gh",
-    "Senegal": "jumia.sn"
-}
-
-# Function to get Jumia product link from SKU
-def get_jumia_link(sku, domain):
+def get_product_images(url):
     try:
-        search_url = f"https://{domain}/catalog/?q={sku}"
-        scraper = cloudscraper.create_scraper()
-        response = scraper.get(search_url)
-
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
         if response.status_code != 200:
-            return "NONE"
+            return 0, []
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        product_tag = soup.find("a", {"class": "core"})
+        soup = BeautifulSoup(response.text, 'html.parser')
+        images = soup.find_all("img", {"data-testid": "main-image"})  # Jumia often uses data-testid for main images
+        if not images:
+            # fallback: check all images with certain class
+            images = soup.find_all("img", {"class": "lazy"})
 
-        if product_tag and product_tag.get("href"):
-            return f"https://{domain}" + product_tag["href"]
-        else:
-            return "NONE"
-    except:
-        return "NONE"
+        img_links = []
+        for img in images:
+            src = img.get("data-src") or img.get("src")
+            if src and src.startswith("http"):
+                img_links.append(src)
 
-# App UI
-st.title("Jumia SKU to Product Link Finder")
+        # Remove duplicates
+        img_links = list(dict.fromkeys(img_links))
+        return len(img_links), img_links
+    except Exception as e:
+        return 0, []
 
-# Country selector
-country = st.selectbox("Select Jumia Country", list(JUMIA_DOMAINS.keys()))
-domain = JUMIA_DOMAINS[country]
+st.title("Jumia Product Image Extractor")
+st.write("Upload an Excel file with a column named 'link' containing Jumia product URLs.")
 
-# Option 1: Manual SKU input
-sku_input = st.text_input("Enter a SKU to search for:")
-if st.button("Find Link") and sku_input:
-    with st.spinner(f"Searching on {country}..."):
-        link = get_jumia_link(sku_input, domain)
-    st.write(f"**Result:** {link}")
-
-# Option 2: File upload
-uploaded_file = st.file_uploader("Upload Excel or CSV file with SKUs", type=["xlsx", "csv"])
-
+uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 if uploaded_file:
-    # Read file
-    if uploaded_file.name.endswith(".xlsx"):
-        df = pd.read_excel(uploaded_file)
+    df = pd.read_excel(uploaded_file)
+    if 'link' not in df.columns:
+        st.error("The Excel file must have a column named 'link'")
     else:
-        df = pd.read_csv(uploaded_file)
+        results = []
+        max_images = 0
 
-    if "SKU" not in df.columns:
-        st.error("Uploaded file must have a column named 'SKU'.")
-    else:
-        df["Link"] = ""  # Create an empty column for links
         progress_bar = st.progress(0)
-        result_table = st.empty()
+        for idx, row in df.iterrows():
+            url = row['link']
+            img_count, img_links = get_product_images(url)
+            result_row = {"link": url, "image_count": img_count}
+            for i, link in enumerate(img_links):
+                result_row[f"image_{i+1}"] = link
+            results.append(result_row)
+            if img_count > max_images:
+                max_images = img_count
+            progress_bar.progress((idx + 1) / len(df))
 
-        for idx, sku in enumerate(df["SKU"]):
-            df.at[idx, "Link"] = get_jumia_link(sku, domain)
-            progress = (idx + 1) / len(df)
-            progress_bar.progress(progress)
-            result_table.dataframe(df)  # Update table live
-            time.sleep(0.2)  # Small delay to visualize progress
+        result_df = pd.DataFrame(results)
 
-        st.success("Processing complete!")
-        st.dataframe(df)
+        # Fill missing columns up to max_images
+        for i in range(1, max_images + 1):
+            col = f"image_{i}"
+            if col not in result_df.columns:
+                result_df[col] = None
 
-        # CSV download
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Download Results as CSV",
-            data=csv,
-            file_name=f"jumia_links_{country.lower()}.csv",
-            mime="text/csv",
-        )
+        st.write("### Results", result_df)
 
-        # XLSX download
+        # Download as Excel
         output = BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name="Links")
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            result_df.to_excel(writer, index=False)
         st.download_button(
-            label="Download Results as Excel",
+            label="Download results as Excel",
             data=output.getvalue(),
-            file_name=f"jumia_links_{country.lower()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            file_name="jumia_product_images.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
