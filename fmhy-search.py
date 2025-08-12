@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 import json
 import time
 from io import BytesIO
+import re
 
 # Map for Jumia domains
 JUMIA_DOMAINS = {
@@ -39,34 +40,38 @@ def get_jumia_link(sku, domain):
     except:
         return "NONE"
 
-def get_main_product_images(product_url):
+def get_main_product_images_js(product_url):
     if product_url == "NONE":
         return []
     try:
         response = scraper.get(product_url)
         if response.status_code != 200:
             return []
-        soup = BeautifulSoup(response.text, "html.parser")
-        scripts = soup.find_all("script", {"type": "application/ld+json"})
-        for script in scripts:
-            try:
-                data = json.loads(script.string)
-                images = None
-                if isinstance(data, dict):
-                    if "mainEntity" in data and "image" in data["mainEntity"]:
-                        images = data["mainEntity"]["image"]
-                    elif "image" in data:
-                        images = data["image"]
-                if images:
-                    if isinstance(images, str):
-                        return [images]
-                    elif isinstance(images, list):
-                        filtered = [img for img in images if "/product/" in img or "/media/" in img]
-                        return filtered if filtered else images
-            except:
-                continue
-        return []
-    except:
+
+        html = response.text
+
+        # Extract JSON from window.__PRELOADED_STATE__ variable
+        match = re.search(r"window\.__PRELOADED_STATE__\s*=\s*({.*?});", html, re.DOTALL)
+        if not match:
+            return []
+
+        data_json = match.group(1)
+        data = json.loads(data_json)
+
+        product_data = data.get("product", {}).get("product", {})
+        if not product_data:
+            return []
+
+        media = product_data.get("media", [])
+        images = []
+        for item in media:
+            if item.get("type") == "image" and item.get("url"):
+                images.append(item["url"])
+
+        return images
+
+    except Exception as e:
+        st.error(f"Error parsing JS product images for {product_url}: {e}")
         return []
 
 st.title("Jumia SKU Link & Main Product Images Finder")
@@ -78,7 +83,7 @@ sku_input = st.text_input("Enter a SKU to search for:")
 if st.button("Find Link") and sku_input:
     with st.spinner(f"Searching on {country}..."):
         link = get_jumia_link(sku_input, domain)
-        images = get_main_product_images(link)
+        images = get_main_product_images_js(link)
     st.write(f"**Result:** {link}")
     st.write(f"**Number of main product images:** {len(images)}")
     for i, img_url in enumerate(images, start=1):
@@ -108,7 +113,7 @@ if uploaded_file:
             link = get_jumia_link(sku, domain)
             df.at[idx, "Link"] = link
 
-            images = get_main_product_images(link)
+            images = get_main_product_images_js(link)
             img_count = len(images)
             df.at[idx, "Image Count"] = img_count
 
@@ -120,7 +125,6 @@ if uploaded_file:
             result_table.dataframe(df)
             time.sleep(0.2)
 
-        # Add columns Image 1, Image 2, ... up to max_images_found
         for i in range(max_images_found):
             col_name = f"Image {i+1}"
             df[col_name] = [imgs[i] if i < len(imgs) else "" for imgs in all_images]
