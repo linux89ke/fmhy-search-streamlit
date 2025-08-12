@@ -17,7 +17,12 @@ JUMIA_DOMAINS = {
     "Senegal": "jumia.sn"
 }
 
-scraper = cloudscraper.create_scraper()
+scraper = cloudscraper.create_scraper(
+    browser={
+        'custom': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)'
+                  ' Chrome/115.0.0.0 Safari/537.36'
+    }
+)
 
 def get_jumia_link(sku, domain):
     try:
@@ -46,8 +51,13 @@ def get_main_product_images(product_url):
         for script in scripts:
             try:
                 data = json.loads(script.string)
-                if isinstance(data, dict) and "image" in data:
-                    images = data["image"]
+                images = None
+                if isinstance(data, dict):
+                    if "mainEntity" in data and "image" in data["mainEntity"]:
+                        images = data["mainEntity"]["image"]
+                    elif "image" in data:
+                        images = data["image"]
+                if images:
                     if isinstance(images, str):
                         return [images]
                     elif isinstance(images, list):
