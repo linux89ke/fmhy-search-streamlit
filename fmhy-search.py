@@ -1,68 +1,55 @@
 import streamlit as st
 import pandas as pd
-import re
 import requests
-from io import BytesIO
+from bs4 import BeautifulSoup
 
 st.title("Jumia Product Image Extractor")
 
-st.write("Upload an Excel file with a column named **url** containing Jumia product links.")
-
-uploaded_file = st.file_uploader("Upload Excel", type=["xlsx"])
-
-def get_product_id(url):
-    # Extract product ID from URL (the part before .html, after the last hyphen)
-    match = re.search(r'-([A-Z0-9]+)\.html', url)
-    if match:
-        return match.group(1)
-    return None
-
-def get_images_from_jumia(product_id):
-    api_url = f"https://www.jumia.co.ke/fragment/sp/products/provider/mirakl/page-types/pdp/skus/{product_id}/?lang=en"
-    headers = {
-        "x-request-type": "async",
-        "User-Agent": "Mozilla/5.0"
-    }
-    try:
-        r = requests.get(api_url, headers=headers, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            media = data.get("data", {}).get("media", [])
-            image_urls = [m.get("url") for m in media if m.get("url")]
-            return image_urls
-    except Exception as e:
-        st.write(f"Error fetching {product_id}: {e}")
-    return []
+uploaded_file = st.file_uploader("Upload Excel/CSV with Jumia product links", type=["xlsx", "csv"])
 
 if uploaded_file:
-    df = pd.read_excel(uploaded_file)
-
-    if "url" not in df.columns:
-        st.error("Excel file must contain a column named 'url'")
+    if uploaded_file.name.endswith(".xlsx"):
+        df = pd.read_excel(uploaded_file)
     else:
-        results = []
-        max_images = 0
+        df = pd.read_csv(uploaded_file)
 
-        for _, row in df.iterrows():
-            product_url = row["url"]
-            product_id = get_product_id(product_url)
-            if product_id:
-                images = get_images_from_jumia(product_id)
-                max_images = max(max_images, len(images))
-                results.append([product_url, len(images)] + images)
-            else:
-                results.append([product_url, 0])
+    link_column = st.selectbox("Select the column with product links", df.columns)
 
-        # Create columns dynamically
-        col_names = ["url", "num_images"] + [f"image_{i+1}" for i in range(max_images)]
-        result_df = pd.DataFrame(results, columns=col_names)
+    results = []
 
-        st.write("### Extracted Data")
-        st.dataframe(result_df)
+    for link in df[link_column]:
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36"
+            }
+            resp = requests.get(link, headers=headers, timeout=10)
+            soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Download button
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            result_df.to_excel(writer, index=False)
-        st.download_button("Download Excel", data=output.getvalue(),
-                           file_name="jumia_images.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            # Find all images in the product gallery
+            images = []
+            for img in soup.select("img"):
+                src = img.get("data-src") or img.get("src")
+                if src and "jumia.co.ke" in src and src.endswith(".jpg"):
+                    images.append(src)
+
+            images = list(dict.fromkeys(images))  # Remove duplicates while keeping order
+
+            row = {"Product Link": link, "Image Count": len(images)}
+            for i, img_url in enumerate(images, start=1):
+                row[f"Image {i}"] = img_url
+
+            results.append(row)
+
+        except Exception as e:
+            results.append({"Product Link": link, "Image Count": 0, "Error": str(e)})
+
+    results_df = pd.DataFrame(results)
+
+    st.write("### Results")
+    st.dataframe(results_df)
+
+    # Download results
+    output_file = "jumia_image_results.xlsx"
+    results_df.to_excel(output_file, index=False)
+    with open(output_file, "rb") as f:
+        st.download_button("Download Results Excel", f, file_name=output_file)
