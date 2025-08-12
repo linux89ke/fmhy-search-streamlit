@@ -6,7 +6,7 @@ import json
 import time
 from io import BytesIO
 
-# Map for Jumia domains
+# Jumia domains map
 JUMIA_DOMAINS = {
     "Kenya": "jumia.co.ke",
     "Nigeria": "jumia.com.ng",
@@ -66,3 +66,75 @@ st.title("Jumia SKU Link & Main Product Images Finder")
 
 country = st.selectbox("Select Country", list(JUMIA_DOMAINS.keys()))
 domain = JUMIA_DOMAINS[country]
+
+sku_input = st.text_input("Enter a SKU to search for:")
+if st.button("Find Link") and sku_input:
+    with st.spinner(f"Searching on {country}..."):
+        link = get_jumia_link(sku_input, domain)
+        images = get_main_product_images_ldjson(link)
+    st.write(f"**Result:** {link}")
+    st.write(f"**Number of main product images:** {len(images)}")
+    for i, img_url in enumerate(images, start=1):
+        st.image(img_url, width=150, caption=f"Image {i}")
+
+uploaded_file = st.file_uploader("Upload Excel or CSV file with SKUs", type=["xlsx", "csv"])
+
+if uploaded_file:
+    if uploaded_file.name.endswith(".xlsx"):
+        df = pd.read_excel(uploaded_file)
+    else:
+        df = pd.read_csv(uploaded_file)
+
+    if "SKU" not in df.columns:
+        st.error("Uploaded file must have a column named 'SKU'.")
+    else:
+        df["Link"] = ""
+        df["Image Count"] = 0
+
+        max_images_found = 0
+        progress_bar = st.progress(0)
+        result_table = st.empty()
+
+        all_images = []
+
+        for idx, sku in enumerate(df["SKU"]):
+            link = get_jumia_link(sku, domain)
+            df.at[idx, "Link"] = link
+
+            images = get_main_product_images_ldjson(link)
+            img_count = len(images)
+            df.at[idx, "Image Count"] = img_count
+
+            all_images.append(images)
+            if img_count > max_images_found:
+                max_images_found = img_count
+
+            progress_bar.progress((idx + 1) / len(df))
+            result_table.dataframe(df)
+            time.sleep(0.2)
+
+        # Add columns Image 1 .. Image N
+        for i in range(max_images_found):
+            col_name = f"Image {i+1}"
+            df[col_name] = [imgs[i] if i < len(imgs) else "" for imgs in all_images]
+
+        st.success("Processing complete!")
+        st.dataframe(df)
+
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="Download Results as CSV",
+            data=csv,
+            file_name=f"jumia_links_images_{country.lower()}.csv",
+            mime="text/csv",
+        )
+
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="LinksAndImages")
+        st.download_button(
+            label="Download Results as Excel",
+            data=output.getvalue(),
+            file_name=f"jumia_links_images_{country.lower()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
