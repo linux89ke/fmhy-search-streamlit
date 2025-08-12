@@ -3,7 +3,6 @@ import pandas as pd
 import cloudscraper
 from bs4 import BeautifulSoup
 import json
-import re
 import time
 from io import BytesIO
 
@@ -20,18 +19,14 @@ JUMIA_DOMAINS = {
 
 scraper = cloudscraper.create_scraper()
 
-# Function to get Jumia product link from SKU
 def get_jumia_link(sku, domain):
     try:
         search_url = f"https://{domain}/catalog/?q={sku}"
         response = scraper.get(search_url)
-
         if response.status_code != 200:
             return "NONE"
-
         soup = BeautifulSoup(response.text, "html.parser")
         product_tag = soup.find("a", {"class": "core"})
-
         if product_tag and product_tag.get("href"):
             return f"https://{domain}" + product_tag["href"]
         else:
@@ -39,41 +34,32 @@ def get_jumia_link(sku, domain):
     except:
         return "NONE"
 
-# Improved function to count only main product images
-def get_image_count(product_url):
+def get_main_product_images(product_url):
     if product_url == "NONE":
-        return 0
+        return []
     try:
         response = scraper.get(product_url)
         if response.status_code != 200:
-            return 0
-
+            return []
         soup = BeautifulSoup(response.text, "html.parser")
-
-        # 1) Try JSON-LD extraction first
         scripts = soup.find_all("script", {"type": "application/ld+json"})
         for script in scripts:
             try:
                 data = json.loads(script.string)
                 if isinstance(data, dict) and "image" in data:
                     images = data["image"]
-                    if isinstance(images, list):
+                    if isinstance(images, str):
+                        return [images]
+                    elif isinstance(images, list):
                         filtered = [img for img in images if "/product/" in img or "/media/" in img]
-                        return len(filtered) if filtered else len(images)
-                    elif isinstance(images, str):
-                        return 1
+                        return filtered if filtered else images
             except:
                 continue
-
-        # 2) Fallback: regex search and filter for product/media images only
-        matches = re.findall(r'https://\w+\.jumia\.is/.+?\.jpg', response.text)
-        filtered = [url for url in set(matches) if ("/product/" in url or "/media/" in url)]
-        return len(filtered)
+        return []
     except:
-        return 0
+        return []
 
-# Streamlit UI
-st.title("Product Link and Main Image Count Finder")
+st.title("Jumia SKU Link & Main Product Images Finder")
 
 country = st.selectbox("Select Country", list(JUMIA_DOMAINS.keys()))
 domain = JUMIA_DOMAINS[country]
@@ -82,9 +68,11 @@ sku_input = st.text_input("Enter a SKU to search for:")
 if st.button("Find Link") and sku_input:
     with st.spinner(f"Searching on {country}..."):
         link = get_jumia_link(sku_input, domain)
-        img_count = get_image_count(link)
+        images = get_main_product_images(link)
     st.write(f"**Result:** {link}")
-    st.write(f"**Number of product images:** {img_count}")
+    st.write(f"**Number of main product images:** {len(images)}")
+    for i, img_url in enumerate(images, start=1):
+        st.image(img_url, width=150, caption=f"Image {i}")
 
 uploaded_file = st.file_uploader("Upload Excel or CSV file with SKUs", type=["xlsx", "csv"])
 
@@ -100,19 +88,32 @@ if uploaded_file:
         df["Link"] = ""
         df["Image Count"] = 0
 
+        max_images_found = 0
         progress_bar = st.progress(0)
         result_table = st.empty()
+
+        all_images = []
 
         for idx, sku in enumerate(df["SKU"]):
             link = get_jumia_link(sku, domain)
             df.at[idx, "Link"] = link
 
-            img_count = get_image_count(link)
+            images = get_main_product_images(link)
+            img_count = len(images)
             df.at[idx, "Image Count"] = img_count
+
+            all_images.append(images)
+            if img_count > max_images_found:
+                max_images_found = img_count
 
             progress_bar.progress((idx + 1) / len(df))
             result_table.dataframe(df)
             time.sleep(0.2)
+
+        # Add columns Image 1, Image 2, ... up to max_images_found
+        for i in range(max_images_found):
+            col_name = f"Image {i+1}"
+            df[col_name] = [imgs[i] if i < len(imgs) else "" for imgs in all_images]
 
         st.success("Processing complete!")
         st.dataframe(df)
@@ -121,16 +122,16 @@ if uploaded_file:
         st.download_button(
             label="Download Results as CSV",
             data=csv,
-            file_name=f"jumia_links_{country.lower()}.csv",
+            file_name=f"jumia_links_images_{country.lower()}.csv",
             mime="text/csv",
         )
 
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name="Links")
+            df.to_excel(writer, index=False, sheet_name="LinksAndImages")
         st.download_button(
             label="Download Results as Excel",
             data=output.getvalue(),
-            file_name=f"jumia_links_{country.lower()}.xlsx",
+            file_name=f"jumia_links_images_{country.lower()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
