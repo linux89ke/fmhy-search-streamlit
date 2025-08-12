@@ -30,7 +30,7 @@ def get_product_images(url):
     except Exception:
         return 0, []
 
-st.title("Jumia Product Image Extractor")
+st.title("Product Image Extractor")
 st.write("Upload an Excel file with a column named 'link' containing Jumia product URLs.")
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
