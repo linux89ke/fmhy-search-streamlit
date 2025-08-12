@@ -39,7 +39,7 @@ def get_jumia_link(sku, domain):
     except:
         return "NONE"
 
-# New improved function to count product images
+# Improved function to count only main product images
 def get_image_count(product_url):
     if product_url == "NONE":
         return 0
@@ -50,7 +50,7 @@ def get_image_count(product_url):
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Try to find <script type="application/ld+json"> containing images
+        # 1) Try JSON-LD extraction first
         scripts = soup.find_all("script", {"type": "application/ld+json"})
         for script in scripts:
             try:
@@ -58,27 +58,26 @@ def get_image_count(product_url):
                 if isinstance(data, dict) and "image" in data:
                     images = data["image"]
                     if isinstance(images, list):
-                        return len(images)
+                        filtered = [img for img in images if "/product/" in img or "/media/" in img]
+                        return len(filtered) if filtered else len(images)
                     elif isinstance(images, str):
                         return 1
             except:
                 continue
 
-        # Fallback: regex search for jumia.is jpg URLs in page text
+        # 2) Fallback: regex search and filter for product/media images only
         matches = re.findall(r'https://\w+\.jumia\.is/.+?\.jpg', response.text)
-        unique_imgs = set(matches)
-        return len(unique_imgs)
+        filtered = [url for url in set(matches) if ("/product/" in url or "/media/" in url)]
+        return len(filtered)
     except:
         return 0
 
-# App UI
-st.title("Product Link and Image Count Finder")
+# Streamlit UI
+st.title("Product Link and Main Image Count Finder")
 
-# Country selector
 country = st.selectbox("Select Country", list(JUMIA_DOMAINS.keys()))
 domain = JUMIA_DOMAINS[country]
 
-# Option 1: Manual SKU input
 sku_input = st.text_input("Enter a SKU to search for:")
 if st.button("Find Link") and sku_input:
     with st.spinner(f"Searching on {country}..."):
@@ -87,11 +86,9 @@ if st.button("Find Link") and sku_input:
     st.write(f"**Result:** {link}")
     st.write(f"**Number of product images:** {img_count}")
 
-# Option 2: File upload
 uploaded_file = st.file_uploader("Upload Excel or CSV file with SKUs", type=["xlsx", "csv"])
 
 if uploaded_file:
-    # Read file
     if uploaded_file.name.endswith(".xlsx"):
         df = pd.read_excel(uploaded_file)
     else:
@@ -100,8 +97,8 @@ if uploaded_file:
     if "SKU" not in df.columns:
         st.error("Uploaded file must have a column named 'SKU'.")
     else:
-        df["Link"] = ""          # Create an empty column for links
-        df["Image Count"] = 0    # New column for image counts
+        df["Link"] = ""
+        df["Image Count"] = 0
 
         progress_bar = st.progress(0)
         result_table = st.empty()
@@ -113,15 +110,13 @@ if uploaded_file:
             img_count = get_image_count(link)
             df.at[idx, "Image Count"] = img_count
 
-            progress = (idx + 1) / len(df)
-            progress_bar.progress(progress)
-            result_table.dataframe(df)  # Update table live
-            time.sleep(0.2)  # Small delay to visualize progress
+            progress_bar.progress((idx + 1) / len(df))
+            result_table.dataframe(df)
+            time.sleep(0.2)
 
         st.success("Processing complete!")
         st.dataframe(df)
 
-        # CSV download
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button(
             label="Download Results as CSV",
@@ -130,7 +125,6 @@ if uploaded_file:
             mime="text/csv",
         )
 
-        # XLSX download
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             df.to_excel(writer, index=False, sheet_name="Links")
