@@ -1,6 +1,9 @@
+import streamlit as st
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 import re
+from io import BytesIO
 
 def get_jumia_product_info(search_term, country_code="ke"):
     base_url = f"https://www.jumia.{country_code}/catalog/?q={search_term.replace(' ', '+')}"
@@ -19,10 +22,7 @@ def get_jumia_product_info(search_term, country_code="ke"):
     if not product_card:
         return {"search": search_term, "error": "No product found"}
 
-    # Get product link
     product_link = "https://www.jumia.{}/".format(country_code) + product_card.a.get("href").lstrip("/")
-
-    # Get product image & extract ID
     img_tag = product_card.select_one("img")
     if img_tag and "data-src" in img_tag.attrs:
         img_url = img_tag["data-src"]
@@ -43,7 +43,30 @@ def get_jumia_product_info(search_term, country_code="ke"):
     }
 
 
-# Example
-if __name__ == "__main__":
-    result = get_jumia_product_info("Anker A81F6G21")
-    print(result)
+st.title("Jumia Product Info Extractor")
+
+uploaded_file = st.file_uploader("Upload Excel or CSV file", type=["xlsx", "csv"])
+
+if uploaded_file:
+    if uploaded_file.name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
+
+    column_name = st.selectbox("Select the column with search terms or URLs", df.columns)
+
+    if st.button("Process"):
+        results = []
+        progress = st.progress(0)
+
+        for idx, val in enumerate(df[column_name]):
+            info = get_jumia_product_info(str(val))
+            results.append(info)
+            progress.progress((idx + 1) / len(df))
+
+        result_df = pd.DataFrame(results)
+        st.dataframe(result_df)
+
+        output = BytesIO()
+        result_df.to_excel(output, index=False)
+        st.download_button("Download Excel", data=output.getvalue(), file_name="jumia_results.xlsx")
