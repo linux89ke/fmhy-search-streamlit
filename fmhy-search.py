@@ -12,9 +12,11 @@ def get_product_images(url):
             return 0, []
 
         soup = BeautifulSoup(response.text, 'html.parser')
-        images = soup.find_all("img", {"data-testid": "main-image"})  # Jumia often uses data-testid for main images
+
+        # Try main image selector first
+        images = soup.find_all("img", {"data-testid": "main-image"})
         if not images:
-            # fallback: check all images with certain class
+            # Fallback: common lazy-loaded class
             images = soup.find_all("img", {"class": "lazy"})
 
         img_links = []
@@ -23,13 +25,12 @@ def get_product_images(url):
             if src and src.startswith("http"):
                 img_links.append(src)
 
-        # Remove duplicates
-        img_links = list(dict.fromkeys(img_links))
+        img_links = list(dict.fromkeys(img_links))  # remove duplicates
         return len(img_links), img_links
-    except Exception as e:
+    except Exception:
         return 0, []
 
-st.title("Product Image Extractor")
+st.title("Jumia Product Image Extractor")
 st.write("Upload an Excel file with a column named 'link' containing Jumia product URLs.")
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
@@ -55,11 +56,15 @@ if uploaded_file:
 
         result_df = pd.DataFrame(results)
 
-        # Fill missing columns up to max_images
+        # Ensure all image columns exist
         for i in range(1, max_images + 1):
             col = f"image_{i}"
             if col not in result_df.columns:
                 result_df[col] = None
+
+        # Reorder columns: link, image_count, then images
+        ordered_cols = ["link", "image_count"] + [f"image_{i}" for i in range(1, max_images + 1)]
+        result_df = result_df[ordered_cols]
 
         st.write("### Results", result_df)
 
