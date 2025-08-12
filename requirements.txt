@@ -1,1 +1,9 @@
+pip>=25.2
+streamlit>=1.40.0
+openpyxl
+pandas
 requests
+beautifulsoup4
+bs4
+cloudscraper
+
